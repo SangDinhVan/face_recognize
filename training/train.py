@@ -9,11 +9,11 @@ from torch.optim import SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import yaml
 
-from datasets.dataset import VGGFace2Dataset
-from models.efficientnet_face import EfficientNetFace
-from models.arcface_head import ArcFaceHead
-from utils.checkpoint import save_checkpoint
-from utils.misc import set_seed, get_device
+from .datasets.dataset import VGGFace2Dataset
+from .models.efficientnet_face import EfficientNetFace
+from .models.arcface_head import ArcFaceHead
+from .utils.checkpoint import save_checkpoint
+from .utils.misc import set_seed, get_device
 
 
 def load_config(cfg_path: str):
