@@ -8,6 +8,8 @@ from torch.utils.data import DataLoader
 from torch.optim import SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import yaml
+import numpy as np
+from tqdm.auto import tqdm
 
 from .datasets.dataset import VGGFace2Dataset
 from .models.efficientnet_face import EfficientNetFace
@@ -15,11 +17,109 @@ from .models.arcface_head import ArcFaceHead
 from .utils.checkpoint import save_checkpoint
 from .utils.misc import set_seed, get_device
 
+def count_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 def load_config(cfg_path: str):
     with open(cfg_path, "r") as f:
         cfg = yaml.safe_load(f)
     return cfg
+
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    a = a / (np.linalg.norm(a) + 1e-8)
+    b = b / (np.linalg.norm(b) + 1e-8)
+    return float(np.dot(a, b))
+
+
+def evaluate_val(
+    model: nn.Module,
+    head: nn.Module,
+    criterion: nn.Module,
+    val_loader: DataLoader,
+    device: str,
+    use_amp: bool,
+    max_pairs: int = 10000,
+):
+    """
+    - Tính val loss (CrossEntropy trên ArcFace logits)
+    - Tính verification accuracy trên val set:
+        + Lấy embedding L2-norm từ model
+        + Random same/diff pairs
+        + Sweep threshold -> lấy acc cao nhất
+    """
+    model.eval()
+    head.eval()
+
+    total_loss = 0.0
+    total_steps = 0
+
+    all_embs = []
+    all_labels = []
+
+    with torch.no_grad():
+        for imgs, labels in tqdm(val_loader, desc="Validating", leave=False):
+            imgs = imgs.to(device)
+            labels = labels.to(device)
+
+            with torch.cuda.amp.autocast(enabled=use_amp and (device == "cuda")):
+                # l2_norm=False cho ArcFace loss
+                emb_for_loss = model(imgs, l2_norm=False)
+                logits = head(emb_for_loss, labels)
+                loss = criterion(logits, labels)
+
+            total_loss += loss.item()
+            total_steps += 1
+
+            # lấy embedding cho verification (L2-norm=True)
+            emb_for_ver = model(imgs, l2_norm=True)  # [B, D]
+            all_embs.append(emb_for_ver.cpu())
+            all_labels.append(labels.cpu())
+
+    val_loss = total_loss / max(1, total_steps)
+
+    # nếu val set quá nhỏ
+    if not all_embs:
+        return val_loss, 0.0, 0.0
+
+    embs = torch.cat(all_embs, dim=0).numpy()   # [N, D]
+    labels = torch.cat(all_labels, dim=0).numpy().astype(np.int32)  # [N]
+
+    N = embs.shape[0]
+    if N < 2:
+        return val_loss, 0.0, 0.0
+
+    # build random verification pairs
+    rng = np.random.default_rng(42)
+    sims = []
+    gts = []
+
+    max_pairs = min(max_pairs, N * (N - 1) // 2)
+    target_pairs = max_pairs
+
+    while len(sims) < target_pairs:
+        i, j = rng.integers(0, N, size=2)
+        if i == j:
+            continue
+        same = 1 if labels[i] == labels[j] else 0
+        sim = cosine_similarity(embs[i], embs[j])
+        sims.append(sim)
+        gts.append(same)
+
+    sims = np.array(sims, dtype=np.float32)
+    gts = np.array(gts, dtype=np.int32)
+
+    # sweep threshold từ -1 -> 1
+    best_acc = 0.0
+    best_thr = 0.0
+    for thr in np.linspace(-1.0, 1.0, 200):
+        preds = (sims >= thr).astype(np.int32)
+        acc = (preds == gts).mean()
+        if acc > best_acc:
+            best_acc = acc
+            best_thr = float(thr)
+
+    return val_loss, best_acc, best_thr
 
 
 def train_from_config(cfg_path: str = "training/configs/config.yaml"):
@@ -36,7 +136,7 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
     print(f"Experiment: {exp_name}")
     print(f"Device    : {device}")
 
-    # Dataset
+    # ====== Dataset train ======
     train_dataset = VGGFace2Dataset(
         root_dir=data_cfg["train_root"],
         input_size=data_cfg["input_size"],
@@ -52,7 +152,28 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
         drop_last=True,
     )
 
-    # Model + head
+    # ====== Dataset val (nếu có) ======
+    val_loader = None
+    val_root = data_cfg.get("val_root")
+    if val_root is not None and str(val_root).lower() not in ["", "none", "null"]:
+        if os.path.isdir(val_root):
+            val_dataset = VGGFace2Dataset(
+                root_dir=val_root,
+                input_size=data_cfg["input_size"],
+            )
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=train_cfg["batch_size"],
+                shuffle=False,
+                num_workers=train_cfg["num_workers"],
+                pin_memory=True,
+                drop_last=False,
+            )
+            print(f"Use val set from: {val_root}")
+        else:
+            print(f"[WARN] val_root does not exist: {val_root}, skip val.")
+
+    # ====== Model + head ======
     model = EfficientNetFace(
         backbone_name=model_cfg["backbone_name"],
         embedding_dim=model_cfg["embedding_dim"],
@@ -65,7 +186,9 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
         s=arcface_cfg.get("scale_s", 64.0),
         m=arcface_cfg.get("margin_m", 0.5),
     ).to(device)
-
+    print("Backbone params:", count_params(model))
+    print("Head params:", count_params(head))
+    print("Total params :", count_params(model) + count_params(head))
     criterion = nn.CrossEntropyLoss()
 
     optimizer = SGD(
@@ -84,7 +207,7 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
     use_amp = bool(train_cfg.get("use_amp", True))
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp and (device == "cuda"))
 
-    best_loss = float("inf")
+    best_ver_acc = 0.0  # chọn best theo verification accuracy
 
     for epoch in range(1, train_cfg["epochs"] + 1):
         model.train()
@@ -92,7 +215,8 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
 
         running_loss = 0.0
 
-        for step, (imgs, labels) in enumerate(train_loader, start=1):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{train_cfg['epochs']}")
+        for step, (imgs, labels) in enumerate(pbar, start=1):
             imgs = imgs.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
 
@@ -108,20 +232,40 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
             scaler.update()
 
             running_loss += float(loss.item())
-
-            if step % 50 == 0:
-                print(
-                    f"[Epoch {epoch}/{train_cfg['epochs']}] "
-                    f"Step {step}/{len(train_loader)} "
-                    f"Loss: {running_loss / step:.4f}"
-                )
+            avg_train_loss = running_loss / step
+            pbar.set_postfix(loss=f"{avg_train_loss:.4f}")
 
         scheduler.step()
 
         avg_loss = running_loss / max(1, len(train_loader))
-        is_best = avg_loss < best_loss
-        if is_best:
-            best_loss = avg_loss
+
+        # ====== VALIDATION / VERIFICATION ======
+        if val_loader is not None:
+            val_loss, ver_acc, ver_thr = evaluate_val(
+                model=model,
+                head=head,
+                criterion=criterion,
+                val_loader=val_loader,
+                device=device,
+                use_amp=use_amp,
+                max_pairs=5000,   # cho nhẹ, có thể tăng
+            )
+            print(
+                f"→ [VAL] loss={val_loss:.4f} | ver_acc={ver_acc:.4f} | best_thr={ver_thr:.3f}"
+            )
+        else:
+            val_loss, ver_acc, ver_thr = None, None, None
+
+        # chọn best model theo ver_acc (nếu có val), ngược lại theo train loss
+        if ver_acc is not None:
+            is_best = ver_acc > best_ver_acc
+            if is_best:
+                best_ver_acc = ver_acc
+        else:
+            # fallback nếu không có val
+            is_best = avg_loss < best_ver_acc or best_ver_acc == 0.0
+            if is_best:
+                best_ver_acc = avg_loss
 
         state = {
             "epoch": epoch,
@@ -134,6 +278,11 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
             "input_size": data_cfg["input_size"],
             "train_cfg": train_cfg,
             "arcface_cfg": arcface_cfg,
+            "train_loss": avg_loss,
+            "val_loss": val_loss,
+            "ver_acc": ver_acc,
+            "ver_thr": ver_thr,
+            "best_ver_acc": best_ver_acc,
         }
 
         ckpt_name = f"epoch_{epoch}.pth"
@@ -144,11 +293,15 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
             is_best=is_best,
             best_filename="best.pth",
         )
-        print(f"Saved checkpoint: {ckpt_path}  (best={is_best}, avg_loss={avg_loss:.4f})")
+        print(
+            f"Saved checkpoint: {ckpt_path} "
+            f"(best={is_best}, train_loss={avg_loss:.4f}, best_ver_acc={best_ver_acc:.4f})"
+        )
 
 
 def main():
     train_from_config(cfg_path="training/configs/config.yaml")
+
 
 if __name__ == "__main__":
     main()
