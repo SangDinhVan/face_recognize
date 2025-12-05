@@ -1,0 +1,22 @@
+experiment_name: "efficientnet_arcface"
+
+data:
+  train_root: "data/vggface2/train"
+  val_root:  "data/vggface2/val" 
+  input_size: 224
+
+model:
+  backbone_name: "efficientnet_b0"
+  embedding_dim: 512
+
+train:
+  batch_size: 256
+  epochs: 20
+  base_lr: 0.1
+  num_workers: 8
+  use_amp: true         
+  save_dir: "weights/checkpoints"
+
+arcface:
+  scale_s: 64.0
+  margin_m: 0.5
