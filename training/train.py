@@ -207,8 +207,12 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
     use_amp = bool(train_cfg.get("use_amp", True))
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp and (device == "cuda"))
 
+    patience = int(train_cfg.get("early_stop_patience", 0))      # 0 = tắt early stop
+    min_delta = float(train_cfg.get("early_stop_min_delta", 0.0))
+    
     best_ver_acc = 0.0  # chọn best theo verification accuracy
-
+    best_train_loss = float("inf")
+    no_improve_epochs = 0
     for epoch in range(1, train_cfg["epochs"] + 1):
         model.train()
         head.train()
@@ -256,16 +260,25 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
         else:
             val_loss, ver_acc, ver_thr = None, None, None
 
-        # chọn best model theo ver_acc (nếu có val), ngược lại theo train loss
-        if ver_acc is not None:
-            is_best = ver_acc > best_ver_acc
-            if is_best:
+         
+        if val_loader is not None and (ver_acc is not None):
+            improved = ver_acc > (best_ver_acc + min_delta)
+            if improved:
                 best_ver_acc = ver_acc
+                no_improve_epochs = 0
+            else:
+                no_improve_epochs += 1
+            is_best = improved
         else:
-            # fallback nếu không có val
-            is_best = avg_loss < best_ver_acc or best_ver_acc == 0.0
-            if is_best:
-                best_ver_acc = avg_loss
+            # không có val set → fallback sang train loss
+            improved = avg_loss < (best_train_loss - min_delta)
+            if improved:
+                best_train_loss = avg_loss
+                no_improve_epochs = 0
+            else:
+                no_improve_epochs += 1
+            is_best = improved
+
 
         state = {
             "epoch": epoch,
@@ -297,6 +310,13 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
             f"Saved checkpoint: {ckpt_path} "
             f"(best={is_best}, train_loss={avg_loss:.4f}, best_ver_acc={best_ver_acc:.4f})"
         )
+
+        if patience > 0 and no_improve_epochs >= patience:
+            print(
+                f"[Early Stop] Không cải thiện trong {patience} epoch liên tiếp. "
+                f"Dừng tại epoch {epoch}."
+            )
+            break
 
 
 def main():

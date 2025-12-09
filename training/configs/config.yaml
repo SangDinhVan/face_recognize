@@ -16,6 +16,8 @@ train:
   num_workers: 8
   use_amp: true         
   save_dir: "weights/checkpoints"
+  early_stop_patience: 5       
+  early_stop_min_delta: 0.0005
 
 arcface:
   scale_s: 64.0
