@@ -45,30 +45,6 @@ def detect_biggest_face(
     return best_box
 
 
-def expand_box(
-    box: Tuple[int, int, int, int],
-    img_w: int,
-    img_h: int,
-    scale: float = 1.2
-) -> Tuple[int, int, int, int]:
-    """
-    Nới rộng bbox một chút để lấy cả vùng quanh mặt.
-    scale > 1 nghĩa là mở rộng.
-    """
-    x1, y1, x2, y2 = box
-    cx = (x1 + x2) / 2.0
-    cy = (y1 + y2) / 2.0
-    w = (x2 - x1) * scale
-    h = (y2 - y1) * scale
-
-    new_x1 = int(max(0, cx - w / 2.0))
-    new_y1 = int(max(0, cy - h / 2.0))
-    new_x2 = int(min(img_w - 1, cx + w / 2.0))
-    new_y2 = int(min(img_h - 1, cy + h / 2.0))
-
-    return new_x1, new_y1, new_x2, new_y2
-
-
 def preprocess_dataset(
     src_root: str,
     dst_root: str,
@@ -80,7 +56,7 @@ def preprocess_dataset(
     """
     src_root: thư mục gốc raw data (cấu trúc: root/id/*.jpg)
     dst_root: thư mục output (giữ nguyên cấu trúc id)
-    model_path: đường dẫn file .pt YOLOv8-face (ví dụ: yolov8n-face.pt)
+    model_path: đường dẫn file YOLOv8-face (.pt hoặc .onnx đều được với ultralytics)
     """
     src_root = Path(src_root)
     dst_root = Path(dst_root)
@@ -124,26 +100,26 @@ def preprocess_dataset(
 
             box = detect_biggest_face(model, img, conf_thres=conf_thres)
             if box is None:
-                # không detect được mặt -> có thể bỏ hoặc copy nguyên ảnh
-                # ở đây mình bỏ qua cho sạch
-                # Nếu muốn lưu img resize luôn thì thay đổi ở đây
-                # face = img.resize((output_size, output_size))
-                # face.save(out_path)
+                # không detect được mặt -> bỏ qua cho sạch
                 continue
 
-            # nới rộng box một chút
-            box = expand_box(box, w, h, scale=1.2)
-
+            # KHÔNG nới rộng box nữa, cắt sát theo YOLO giống runtime
             x1, y1, x2, y2 = box
+
+            # clamp bbox vào trong ảnh giống như bạn làm ở FaceDetector
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(w - 1, x2)
+            y2 = min(h - 1, y2)
+
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            # crop sát mặt
             face = img.crop((x1, y1, x2, y2))
 
             # resize về kích thước input của model
             face = face.resize((output_size, output_size), Image.BILINEAR)
-
-            # "xử lý sương sương": có thể thêm blur nhẹ/auto contrast nếu muốn
-            # ví dụ:
-            # from PIL import ImageFilter, ImageOps
-            # face = ImageOps.autocontrast(face)
 
             try:
                 face.save(out_path)
@@ -163,7 +139,7 @@ def parse_args():
     parser.add_argument("--dst_root", type=str, required=True,
                         help="Thư mục lưu ảnh mặt đã crop")
     parser.add_argument("--model_path", type=str, required=True,
-                        help="Đường dẫn file YOLOv8-face .pt")
+                        help="Đường dẫn file YOLOv8-face (.pt hoặc .onnx)")
     parser.add_argument("--img_size", type=int, default=224,
                         help="Kích thước output (H=W)")
     parser.add_argument("--conf_thres", type=float, default=0.3,
@@ -174,6 +150,7 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    # chạy thẳng code, hoặc dùng parse_args nếu muốn CLI
     preprocess_dataset(
         src_root="data/vggface2/val",
         dst_root="data/vggface2_processed/val",
@@ -182,4 +159,3 @@ if __name__ == "__main__":
         conf_thres=0.3,
         overwrite=False
     )
-

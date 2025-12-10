@@ -12,7 +12,7 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 def match_embedding(
     query_emb: np.ndarray,
     db_embeddings: List[Tuple[str, np.ndarray]],
-    threshold: float = 0.5,
+    threshold: float = 0.3,
 ) -> Tuple[int, Optional[str], float]:
     if query_emb is None or not db_embeddings:
         return 0, None, 0.0
