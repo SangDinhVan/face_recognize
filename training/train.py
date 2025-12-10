@@ -10,6 +10,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import yaml
 import numpy as np
 from tqdm.auto import tqdm
+from torch import amp
 
 from .datasets.dataset import VGGFace2Dataset
 from .models.efficientnet_face import EfficientNetFace
@@ -226,7 +227,8 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
 
             optimizer.zero_grad()
 
-            with torch.cuda.amp.autocast(enabled=use_amp and (device == "cuda")):
+            use_autocast = use_amp and (device == "cuda")
+            with amp.autocast("cuda", enabled=use_autocast):
                 embeddings = model(imgs, l2_norm=False)
                 logits = head(embeddings, labels)
                 loss = criterion(logits, labels)
