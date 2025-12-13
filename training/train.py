@@ -136,6 +136,7 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
     device = get_device()
     print(f"Experiment: {exp_name}")
     print(f"Device    : {device}")
+    
 
     # ====== Dataset train ======
     train_dataset = VGGFace2Dataset(

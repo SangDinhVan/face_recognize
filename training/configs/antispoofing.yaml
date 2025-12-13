@@ -1,0 +1,60 @@
+# antispoofing.yaml
+seed: 42
+
+data:
+  root: "S:\\Downloads\\video"
+  num_workers: 4
+  train:
+    split: "train"
+    clip_len: 1
+    stride: 5
+  val:
+    split: "val"
+    clip_len: 1
+    stride: 5
+
+labels:
+  real: 0
+  attack: 1
+
+# số lượng (để tính class_weight nếu bạn muốn)
+counts:
+  train_real: 120
+  train_attack: 174
+
+model:
+  backbone_name: "efficientnet_b0"
+  embedding_dim: 512
+  dropout: 0.2
+  num_classes: 2
+  pretrained_backbone: false
+
+transfer:
+  face_ckpt_path: "weights/checkpoints/epoch_10.pth"   # <-- đổi path checkpoint của bạn ở đây
+  freeze_bn: true
+  warmup_epochs: 3
+  finetune_epochs: 7
+  unfreeze_last_n_blocks: 2
+  unfreeze_embed: true
+
+train:
+  batch_size: 32
+  image_size: 224
+  use_amp: true
+  grad_clip: 1.0
+  weight_decay: 0.0001
+
+  # LR tách head/backbone
+  lr_head_warmup: 0.001
+  lr_backbone_warmup: 0.00001
+
+  lr_head_finetune: 0.0005
+  lr_backbone_finetune: 0.00001
+
+  # loss
+  use_class_weight: true   # dùng counts ở trên để tạo CE weight
+
+logging:
+  print_every: 50
+  save_dir: "runs/antispoof"
+  save_best: true

@@ -73,6 +73,6 @@ def export_onnx(
 
 if __name__ == "__main__":
     export_onnx(
-        ckpt_path="weights/checkpoints/best.pth",
-        onnx_path="weights/efficientnet_arcface.onnx",
+        ckpt_path="weights/checkpoints/epoch_10.pth",
+        onnx_path="weights/efficientnet_arcface2.onnx",
     )
