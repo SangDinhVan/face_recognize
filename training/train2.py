@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 
 from torchvision import transforms
 
-from .datasets.videodataset import VideoAntiSpoofDataset
+from .datasets.videodataset import VideoAntiSpoofDataset, default_collate
 from .models.AntiSpoof import (
     EfficientNetAntiSpoof,
     load_face_ckpt,
@@ -241,7 +241,9 @@ def main(cfg_path: str):
         train_ds, batch_size=bs, shuffle=True, num_workers=nw, pin_memory=True, drop_last=True
     )
     val_loader = DataLoader(
-        val_ds, batch_size=bs, shuffle=False, num_workers=nw, pin_memory=True, drop_last=False
+        val_ds, batch_size=bs, shuffle=False,
+        num_workers=nw, pin_memory=True, drop_last=False,
+        collate_fn=default_collate
     )
 
     # ---- Model
