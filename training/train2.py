@@ -192,6 +192,8 @@ def train_one_epoch(model: nn.Module, loader: DataLoader, optimizer, criterion, 
 
 
 def main(cfg_path: str):
+ 
+
     with open(cfg_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
@@ -278,6 +280,9 @@ def main(cfg_path: str):
     # =========================
     # Stage 1: Warmup (train classifier only)
     # =========================
+    print("CUDA available:", torch.cuda.is_available())
+    print("Model device:", next(model.parameters()).device)
+
     print("\n=== Stage 1: Warmup (classifier only) ===")
     freeze_all_except_classifier(model)
 

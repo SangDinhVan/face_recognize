@@ -181,7 +181,7 @@ class VideoAntiSpoofDataset(Dataset):
             if self.return_path:
                 extra["path"] = path
             if self.return_video_id:
-                extra["video_id"] = os.path.splitext(os.path.basename(path))[0]
+                extra["video_id"] = os.path.relpath(path, self.root)
             return x_out, y_out, extra
 
         return x_out, y_out
