@@ -95,7 +95,7 @@ def load_face_ckpt(
     strict=False là chuẩn (vì classifier mới sẽ missing keys).
     Return: (missing_keys, unexpected_keys)
     """
-    ckpt = torch.load(ckpt_path, map_location=device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     state = _extract_state_dict(ckpt)
     state = _strip_prefix(state, "module.")
     missing, unexpected = model.load_state_dict(state, strict=strict)

@@ -1,2 +1,5 @@
-from training.train import main
+# from training.train import main
+# main()
+
+from runtrain import main 
 main()
