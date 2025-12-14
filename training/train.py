@@ -17,6 +17,10 @@ from .models.efficientnet_face import EfficientNetFace
 from .models.arcface_head import ArcFaceHead
 from .utils.checkpoint import save_checkpoint
 from .utils.misc import set_seed, get_device
+from .utils.init_weigth import init_weigth
+from .utils.lr_schedulr import warmup_cosine_schedulr
+from .utils.amp_trainer import amp_train_step
+from .utils.fine_tune import freeze_backbone, unfreeze_backbone
 
 def count_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -188,20 +192,43 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
         s=arcface_cfg.get("scale_s", 64.0),
         m=arcface_cfg.get("margin_m", 0.5),
     ).to(device)
+
+    freeze_epochs = int(train_cfg.get("freeze_epochs", 0))
+
+    if freeze_epochs > 0:
+        freeze_backbone(model)
+        
+    model.apply(init_weigth)
+    head.apply(init_weigth)
+    nn.init.normal_(head.weight, std=0.01)
+
     print("Backbone params:", count_params(model))
     print("Head params:", count_params(head))
     print("Total params :", count_params(model) + count_params(head))
     criterion = nn.CrossEntropyLoss()
 
+    params = [p for p in list(model.parameters()) + list(head.parameters()) if p.requires_grad]
+
     optimizer = SGD(
-        list(model.parameters()) + list(head.parameters()),
+        params,
         lr=train_cfg["base_lr"],
         momentum=0.9,
         weight_decay=5e-4,
         nesterov=True,
     )
 
-    scheduler = CosineAnnealingLR(optimizer, T_max=train_cfg["epochs"])
+    # scheduler = CosineAnnealingLR(optimizer, T_max=train_cfg["epochs"])
+    total_steps = train_cfg["epochs"] * len(train_loader)
+    warmup_epochs = int(train_cfg.get("warmup_epochs", 2))
+    warmup_steps = warmup_epochs * len(train_loader)
+
+    scheduler = warmup_cosine_schedulr(
+        optimizer=optimizer,
+        warmup_steps=warmup_steps,
+        total_steps=total_steps,
+        min_lr_ratio=float(train_cfg.get("min_lr_ratio", 0.05)),
+    )
+
 
     save_dir = Path(train_cfg["save_dir"])
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -216,6 +243,29 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
     best_train_loss = float("inf")
     no_improve_epochs = 0
     for epoch in range(1, train_cfg["epochs"] + 1):
+        if freeze_epochs > 0 and epoch == freeze_epochs + 1:
+            unfreeze_backbone(model)
+
+            backbone_lr = float(train_cfg.get("backbone_lr", train_cfg["base_lr"] * 0.3))
+            base_lr = float(train_cfg["base_lr"])
+
+            optimizer = SGD(
+                [
+                    {"params": model.backbone.parameters(), "lr": backbone_lr},
+                    {"params": list(model.embedding.parameters()) + list(model.bn.parameters()), "lr": base_lr},
+                    {"params": head.parameters(), "lr": base_lr},
+                ],
+                momentum=0.9,
+                weight_decay=5e-4,
+                nesterov=True,
+            )
+
+            # rebuild scheduler vì optimizer mới
+            total_steps = train_cfg["epochs"] * len(train_loader)
+            warmup_epochs = int(train_cfg.get("warmup_epochs", 2))
+            warmup_steps = warmup_epochs * len(train_loader)
+            scheduler = warmup_cosine_schedulr(optimizer, warmup_steps, total_steps, float(train_cfg.get("min_lr_ratio", 0.05)))
+
         model.train()
         head.train()
 
@@ -242,7 +292,7 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
             avg_train_loss = running_loss / step
             pbar.set_postfix(loss=f"{avg_train_loss:.4f}")
 
-        scheduler.step()
+            scheduler.step()
 
         avg_loss = running_loss / max(1, len(train_loader))
 

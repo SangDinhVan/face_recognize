@@ -12,7 +12,9 @@ model:
 train:
   batch_size: 256
   epochs: 20
-  base_lr: 0.1
+  freeze_epochs: 2
+  backbone_lr: 0.0001
+  base_lr: 0.0003
   num_workers: 8
   use_amp: true         
   save_dir: "weights/checkpoints"
