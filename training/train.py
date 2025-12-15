@@ -69,7 +69,7 @@ def evaluate_val(
 
             with torch.cuda.amp.autocast(enabled=use_amp and (device == "cuda")):
                 # l2_norm=False cho ArcFace loss
-                emb_for_loss = model(imgs, l2_norm=False)
+                emb_for_loss = model(imgs, l2_norm=True)
                 logits = head(emb_for_loss, labels)
                 loss = criterion(logits, labels)
 
