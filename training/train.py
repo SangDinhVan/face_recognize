@@ -1,4 +1,4 @@
-# training/train_vggface2.py
+from collections import defaultdict
 import os
 from pathlib import Path
 
@@ -95,21 +95,44 @@ def evaluate_val(
         return val_loss, 0.0, 0.0
 
     # build random verification pairs
+    # ===== build BALANCED verification pairs =====
+
     rng = np.random.default_rng(42)
     sims = []
     gts = []
 
-    max_pairs = min(max_pairs, N * (N - 1) // 2)
-    target_pairs = max_pairs
+    idx_by_label = defaultdict(list)
+    for idx, y in enumerate(labels):
+        idx_by_label[int(y)].append(idx)
 
-    while len(sims) < target_pairs:
-        i, j = rng.integers(0, N, size=2)
-        if i == j:
+    all_labels = list(idx_by_label.keys())
+
+    # số pair mỗi loại
+    pairs_per_type = max_pairs // 2
+
+    # ---- SAME pairs ----
+    same_cnt = 0
+    while same_cnt < pairs_per_type:
+        y = rng.choice(all_labels)
+        if len(idx_by_label[y]) < 2:
             continue
-        same = 1 if labels[i] == labels[j] else 0
+        i, j = rng.choice(idx_by_label[y], size=2, replace=False)
         sim = cosine_similarity(embs[i], embs[j])
         sims.append(sim)
-        gts.append(same)
+        gts.append(1)
+        same_cnt += 1
+
+    # ---- DIFF pairs ----
+    diff_cnt = 0
+    while diff_cnt < pairs_per_type:
+        y1, y2 = rng.choice(all_labels, size=2, replace=False)
+        i = rng.choice(idx_by_label[y1])
+        j = rng.choice(idx_by_label[y2])
+        sim = cosine_similarity(embs[i], embs[j])
+        sims.append(sim)
+        gts.append(0)
+        diff_cnt += 1
+
 
     sims = np.array(sims, dtype=np.float32)
     gts = np.array(gts, dtype=np.int32)
@@ -198,7 +221,9 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
     if freeze_epochs > 0:
         freeze_backbone(model)
         
-    model.apply(init_weigth)
+    model.embedding.apply(init_weigth)
+    model.bn.apply(init_weigth)
+
     head.apply(init_weigth)
     nn.init.normal_(head.weight, std=0.01)
 
