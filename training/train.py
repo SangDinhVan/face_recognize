@@ -77,8 +77,8 @@ def evaluate_val(
             total_steps += 1
 
             # lấy embedding cho verification (L2-norm=True)
-            emb_for_ver = model(imgs, l2_norm=True)  # [B, D]
-            all_embs.append(emb_for_ver.cpu())
+            # emb_for_ver = model(imgs, l2_norm=True)  # [B, D]
+            all_embs.append(emb_for_loss.cpu())
             all_labels.append(labels.cpu())
 
     val_loss = total_loss / max(1, total_steps)
@@ -305,7 +305,7 @@ def train_from_config(cfg_path: str = "training/configs/config.yaml"):
 
             use_autocast = use_amp and (device == "cuda")
             with amp.autocast("cuda", enabled=use_autocast):
-                embeddings = model(imgs, l2_norm=False)
+                embeddings = model(imgs, l2_norm=True)
                 logits = head(embeddings, labels)
                 loss = criterion(logits, labels)
 
